@@ -2,6 +2,7 @@
 pragma solidity ^0.8.0;
 
 import "forge-std/Test.sol";
+import {Strings} from "openzeppelin-contracts/utils/Strings.sol";
 
 // Interfaces
 import {ISim} from "../src/interfaces/ISim.sol";
@@ -15,6 +16,8 @@ import {Simulate} from "../src/simulate/Simulate.sol";
 import {Strategy} from "../src/strategy/Strategy.sol";
 
 contract StrategyTest is Test {
+    using Strings for uint256;
+
     address internal ssov;
     uint256 internal epoch;
 
@@ -53,5 +56,48 @@ contract StrategyTest is Test {
     {
         volatility = ISsovV3(ssov).getVolatility(0);
         price = ISsovV3(ssov).getUnderlyingPrice();
+    }
+
+    function getStrike(uint256 _epoch, uint256 strikeIndex)
+        public
+        view
+        returns (uint256 strike)
+    {
+        return ISsovV3(ssov).getEpochData(_epoch).strikes[strikeIndex];
+    }
+
+    /// -----------------------------------------------------------------------
+    /// Helper Functions: Inputs
+    /// -----------------------------------------------------------------------
+
+    function getEpochInput(uint256 _idx)
+        public
+        returns (
+            uint256 _epoch,
+            uint256 _blockNumber,
+            uint256 _strikeIndex,
+            uint256 _amount
+        )
+    {
+        string[] memory inputs = new string[](5);
+        inputs[0] = "python3";
+        inputs[1] = inputs[1] = "analysis/inputs.py";
+        inputs[2] = "epoch";
+        inputs[3] = "--index";
+        inputs[4] = _idx.toString();
+        bytes memory res = vm.ffi(inputs);
+        (_epoch, _blockNumber, _strikeIndex, _amount) = abi.decode(
+            res,
+            (uint256, uint256, uint256, uint256)
+        );
+    }
+
+    function test_getInputs() public {
+        (uint256 e, uint256 b, uint256 s, uint256 a) = getEpochInput(0);
+
+        emit log_uint(e);
+        emit log_uint(b);
+        emit log_uint(s);
+        emit log_uint(a);
     }
 }

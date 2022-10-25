@@ -29,4 +29,4 @@
 
 - [ ] settlementPrice
 - [x] volatility
-- [x] collateralPrice
+- [x] currentPrice
