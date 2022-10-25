@@ -91,7 +91,7 @@ contract StrategyTest is Test {
         string[] memory inputs = new string[](5);
         inputs[0] = "python3";
         inputs[1] = inputs[1] = "analysis/inputs.py";
-        inputs[2] = "epoch";
+        inputs[2] = "inputs";
         inputs[3] = "--index";
         inputs[4] = _idx.toString();
         bytes memory res = vm.ffi(inputs);
@@ -101,13 +101,25 @@ contract StrategyTest is Test {
         );
     }
 
+    function getInputLength() public returns (uint256 l) {
+        string[] memory inputs = new string[](3);
+        inputs[0] = "python3";
+        inputs[1] = inputs[1] = "analysis/inputs.py";
+        inputs[2] = "length";
+        bytes memory res = vm.ffi(inputs);
+        l = abi.decode(res, (uint256));
+    }
+
     function test_getInputs() public {
         (uint256 e, uint256 b, uint256 s, uint256 a, bool t) = getInputs(0);
+        uint256 l = getInputLength();
 
         emit log_uint(e);
         emit log_uint(b);
         emit log_uint(s);
         emit log_uint(a);
         assertEq(t, false);
+
+        emit log_named_uint("length inputs", l);
     }
 }
