@@ -4,9 +4,11 @@ pragma solidity ^0.8.0;
 import "forge-std/Test.sol";
 
 // Interfaces
+import {ISim} from "../src/interfaces/ISim.sol";
+
 import {ISsovV3} from "../src/interfaces/ISsovV3.sol";
 import {IERC20} from "../src/interfaces/IERC20.sol";
-import {ISim} from "../src/interfaces/ISim.sol";
+import {IVolatilityOracle} from "../src/interfaces/IVolatilityOracle.sol";
 
 // Contracts
 import {Simulate} from "../src/simulate/Simulate.sol";
@@ -24,8 +26,16 @@ contract StrategyTest is Test {
         /* === END USER INPUT ===*/
     }
 
+    function test_getVolatility() public {
+        setupForkBlockSpecified(23165341);
+
+        uint256 v = getVolatility();
+
+        emit log_named_uint("volatility", v);
+    }
+
     /// -----------------------------------------------------------------------
-    /// Helper functions
+    /// Helper Functions: Fork
     /// -----------------------------------------------------------------------
 
     /// @notice Creates and selects a new arbitrum mainnet fork.
@@ -38,5 +48,14 @@ contract StrategyTest is Test {
     function setupForkBlockSpecified(uint256 blk) public returns (uint256 id) {
         id = vm.createSelectFork(vm.rpcUrl("arbitrum"), blk);
         assertEq(vm.activeFork(), id);
+    }
+
+    /// -----------------------------------------------------------------------
+    /// Helper Functions: SSOV State Variables
+    /// -----------------------------------------------------------------------
+
+    function getVolatility() public view returns (uint256 v) {
+        v = IVolatilityOracle(ISsovV3(ssov).addresses().volatilityOracle)
+            .getVolatility(0);
     }
 }
