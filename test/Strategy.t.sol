@@ -26,14 +26,6 @@ contract StrategyTest is Test {
         /* === END USER INPUT ===*/
     }
 
-    function test_getVolatility() public {
-        setupForkBlockSpecified(23165341);
-
-        uint256 v = getVolatility();
-
-        emit log_named_uint("volatility", v);
-    }
-
     /// -----------------------------------------------------------------------
     /// Helper Functions: Fork
     /// -----------------------------------------------------------------------
@@ -54,8 +46,12 @@ contract StrategyTest is Test {
     /// Helper Functions: SSOV State Variables
     /// -----------------------------------------------------------------------
 
-    function getVolatility() public view returns (uint256 v) {
-        v = IVolatilityOracle(ISsovV3(ssov).addresses().volatilityOracle)
-            .getVolatility(0);
+    function getStateVariables()
+        public
+        view
+        returns (uint256 volatility, uint256 price)
+    {
+        volatility = ISsovV3(ssov).getVolatility(0);
+        price = ISsovV3(ssov).getUnderlyingPrice();
     }
 }
