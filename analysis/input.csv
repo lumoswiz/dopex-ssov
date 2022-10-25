@@ -1,2 +1,2 @@
-epoch,blockNumber,strikeIndex,amount
-1,22962396,0,5
+epoch,blockNumber,strikeIndex,amount,txType
+1,22962396,0,5,0

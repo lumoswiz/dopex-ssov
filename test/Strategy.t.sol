@@ -70,13 +70,22 @@ contract StrategyTest is Test {
     /// Helper Functions: Inputs
     /// -----------------------------------------------------------------------
 
-    function getEpochInput(uint256 _idx)
+    struct Actions {
+        uint256 epoch;
+        uint256 blockNumber;
+        uint256 strikeIndex;
+        uint256 amount;
+        bool txType; // 0 -> deposit, 1 -> purchase
+    }
+
+    function getInputs(uint256 _idx)
         public
         returns (
             uint256 _epoch,
             uint256 _blockNumber,
             uint256 _strikeIndex,
-            uint256 _amount
+            uint256 _amount,
+            bool _txType
         )
     {
         string[] memory inputs = new string[](5);
@@ -86,18 +95,19 @@ contract StrategyTest is Test {
         inputs[3] = "--index";
         inputs[4] = _idx.toString();
         bytes memory res = vm.ffi(inputs);
-        (_epoch, _blockNumber, _strikeIndex, _amount) = abi.decode(
+        (_epoch, _blockNumber, _strikeIndex, _amount, _txType) = abi.decode(
             res,
-            (uint256, uint256, uint256, uint256)
+            (uint256, uint256, uint256, uint256, bool)
         );
     }
 
     function test_getInputs() public {
-        (uint256 e, uint256 b, uint256 s, uint256 a) = getEpochInput(0);
+        (uint256 e, uint256 b, uint256 s, uint256 a, bool t) = getInputs(0);
 
         emit log_uint(e);
         emit log_uint(b);
         emit log_uint(s);
         emit log_uint(a);
+        assertEq(t, false);
     }
 }
