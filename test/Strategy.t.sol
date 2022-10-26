@@ -6,22 +6,24 @@ import {Strings} from "openzeppelin-contracts/utils/Strings.sol";
 
 // Interfaces
 import {ISim} from "../src/interfaces/ISim.sol";
-
 import {ISsovV3} from "../src/interfaces/ISsovV3.sol";
 import {IERC20} from "../src/interfaces/IERC20.sol";
 import {IVolatilityOracle} from "../src/interfaces/IVolatilityOracle.sol";
 
 // Contracts
 import {Simulate} from "../src/simulate/Simulate.sol";
-import {Strategy} from "../src/strategy/Strategy.sol";
+
+// Structs
+import "../src/structs/Structs.sol";
 
 contract StrategyTest is Test {
     using Strings for uint256;
 
-    address internal ssov;
-    uint256 internal epoch;
+    Simulate sim;
 
-    Actions[] public actions;
+    address public ssov;
+
+    Inputs[] public inputs;
 
     function setUp() public {
         /*=== USER INPUT REQUIRED ===*/
@@ -29,6 +31,9 @@ contract StrategyTest is Test {
         ssov = 0x10FD85ec522C245a63239b9FC64434F58520bd1f; // weekly dpx calls V3
 
         allocateInputs();
+
+        setupFork();
+        deploySimulate();
 
         /* === END USER INPUT ===*/
     }
@@ -38,11 +43,11 @@ contract StrategyTest is Test {
     /// -----------------------------------------------------------------------
 
     function test_allocateInputs() public {
-        assertEq(actions.length, getInputLength(), "something went wrong");
+        assertEq(inputs.length, getInputLength(), "something went wrong");
 
-        Actions memory action = actions[1];
+        Inputs memory input = inputs[1];
 
-        emit log_named_uint("amount", action.amount);
+        emit log_named_uint("amount", input.amount);
     }
 
     function test_getInputs() public {
@@ -75,6 +80,15 @@ contract StrategyTest is Test {
     }
 
     /// -----------------------------------------------------------------------
+    /// Helper Functions: Deploy Contracts (Persistent Storage)
+    /// -----------------------------------------------------------------------
+
+    function deploySimulate() public {
+        sim = new Simulate();
+        vm.makePersistent(address(sim));
+    }
+
+    /// -----------------------------------------------------------------------
     /// Helper Functions: SSOV State Variables
     /// -----------------------------------------------------------------------
 
@@ -99,14 +113,6 @@ contract StrategyTest is Test {
     /// Helper Functions: Inputs
     /// -----------------------------------------------------------------------
 
-    struct Actions {
-        uint256 epoch;
-        uint256 blockNumber;
-        uint256 strikeIndex;
-        uint256 amount;
-        uint256 txType; // 0 -> deposit, 1 -> purchase
-    }
-
     function getInputs(uint256 _idx)
         public
         returns (
@@ -117,13 +123,13 @@ contract StrategyTest is Test {
             uint256 _txType
         )
     {
-        string[] memory inputs = new string[](5);
-        inputs[0] = "python3";
-        inputs[1] = inputs[1] = "analysis/inputs.py";
-        inputs[2] = "inputs";
-        inputs[3] = "--index";
-        inputs[4] = _idx.toString();
-        bytes memory res = vm.ffi(inputs);
+        string[] memory inputString = new string[](5);
+        inputString[0] = "python3";
+        inputString[1] = "analysis/inputs.py";
+        inputString[2] = "inputs";
+        inputString[3] = "--index";
+        inputString[4] = _idx.toString();
+        bytes memory res = vm.ffi(inputString);
         (_epoch, _blockNumber, _strikeIndex, _amount, _txType) = abi.decode(
             res,
             (uint256, uint256, uint256, uint256, uint256)
@@ -132,11 +138,11 @@ contract StrategyTest is Test {
     }
 
     function getInputLength() public returns (uint256 l) {
-        string[] memory inputs = new string[](3);
-        inputs[0] = "python3";
-        inputs[1] = inputs[1] = "analysis/inputs.py";
-        inputs[2] = "length";
-        bytes memory res = vm.ffi(inputs);
+        string[] memory inputString = new string[](3);
+        inputString[0] = "python3";
+        inputString[1] = "analysis/inputs.py";
+        inputString[2] = "length";
+        bytes memory res = vm.ffi(inputString);
         l = abi.decode(res, (uint256));
     }
 
@@ -153,8 +159,8 @@ contract StrategyTest is Test {
                 uint256 _txType
             ) = getInputs(i);
 
-            actions.push(
-                Actions({
+            inputs.push(
+                Inputs({
                     epoch: _epoch,
                     blockNumber: _blockNumber,
                     strikeIndex: _strikeIndex,

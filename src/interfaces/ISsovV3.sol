@@ -6,7 +6,7 @@ import {IERC721Enumerable} from "openzeppelin-contracts/token/ERC721/extensions/
 import {IERC20} from "./IERC20.sol";
 
 // Structs
-import {Addresses, EpochData, EpochStrikeData, VaultCheckpoint} from "../SsovV3Structs.sol";
+import {Addresses, EpochData, EpochStrikeData, VaultCheckpoint} from "../structs/SsovV3Structs.sol";
 
 /// @title SSOV V3 interface
 interface ISsovV3 is IERC721Enumerable {
