@@ -16,6 +16,10 @@ contract SimulateV2 is Test {
 
     ISsovV3 public ssov;
 
+    uint256 internal constant OPTIONS_PRECISION = 1e18;
+    uint256 internal constant DEFAULT_PRECISION = 1e8;
+    uint256 internal constant REWARD_PRECISION = 1e18;
+
     constructor(ISsovV3 _ssov) {
         ssov = _ssov;
     }
@@ -33,7 +37,7 @@ contract SimulateV2 is Test {
         _validate(txType_ == 0, 20);
 
         setupForkBlockSpecified(blockNumber_);
-        _epochNotExpired(ssov, epoch_);
+        _epochNotExpired(epoch_);
 
         _valueNotZero(amount_);
 
@@ -65,6 +69,52 @@ contract SimulateV2 is Test {
                 rewardTokenWithdrawAmounts: new uint256[](0)
             }),
             buyerDetails: BuyerDetails({premium: 0, purchaseFee: 0, netPnl: 0})
+        });
+    }
+
+    function purchase(Inputs calldata input)
+        public
+        returns (Outputs memory output)
+    {
+        uint256 epoch_ = input.epoch;
+        uint256 blockNumber_ = input.blockNumber;
+        uint256 strikeIndex_ = input.strikeIndex;
+        uint256 amount_ = input.amount;
+        uint256 txType_ = input.txType;
+
+        _validate(txType_ == 1, 21);
+
+        setupForkBlockSpecified(blockNumber_);
+        _epochNotExpired(epoch_);
+
+        _valueNotZero(amount_);
+
+        uint256 strike = ssov.getEpochData(epoch_).strikes[strikeIndex_];
+        _valueNotZero(strike);
+
+        uint256 premium = _calculatePremium(epoch_, strike, amount_);
+        uint256 purchaseFee = _calculatePurchaseFees(strike, amount_);
+
+        output = Outputs({
+            inputs: Inputs({
+                epoch: epoch_,
+                blockNumber: blockNumber_,
+                strikeIndex: strikeIndex_,
+                amount: amount_,
+                txType: txType_,
+                strike: strike
+            }),
+            writerDetails: WriterDetails({
+                checkpointIndex: 0,
+                collateralTokenWithdrawAmount: 0,
+                rewardDistributionRatios: new uint256[](0),
+                rewardTokenWithdrawAmounts: new uint256[](0)
+            }),
+            buyerDetails: BuyerDetails({
+                premium: premium,
+                purchaseFee: purchaseFee,
+                netPnl: 0
+            })
         });
     }
 
@@ -145,6 +195,57 @@ contract SimulateV2 is Test {
     }
 
     /// -----------------------------------------------------------------------
+    /// Helper functions: purchase
+    /// -----------------------------------------------------------------------
+
+    function _calculatePremium(
+        uint256 epoch,
+        uint256 strike,
+        uint256 amount
+    ) public view returns (uint256 premium) {
+        (, uint256 expiry) = ssov.getEpochTimes(epoch);
+
+        premium =
+            IOptionPricing(ssov.addresses().optionPricing).getOptionPrice(
+                ssov.isPut(),
+                expiry,
+                strike,
+                ssov.getUnderlyingPrice(),
+                ssov.getVolatility(strike)
+            ) *
+            amount;
+
+        premium =
+            (premium * ssov.collateralPrecision()) /
+            (ssov.getCollateralPrice() * OPTIONS_PRECISION);
+    }
+
+    function _calculatePurchaseFees(uint256 strike, uint256 amount)
+        public
+        returns (uint256 fee)
+    {
+        uint256 purchaseFeePercentage = stdstore
+            .target(ssov.addresses().feeStrategy)
+            .sig("ssovFeeStructures(address)")
+            .with_key(address(ssov))
+            .read_uint();
+
+        fee =
+            ((purchaseFeePercentage * amount * ssov.getUnderlyingPrice()) /
+                1e10) /
+            1e18;
+
+        if (ssov.getUnderlyingPrice() < strike) {
+            uint256 feeMultiplier = ((strike * 100) /
+                (ssov.getUnderlyingPrice()) -
+                100) + 100;
+            fee = (feeMultiplier * fee) / 100;
+        }
+
+        return ((fee * ssov.collateralPrecision()) / ssov.getCollateralPrice());
+    }
+
+    /// -----------------------------------------------------------------------
     /// Private functions for reverts
     /// -----------------------------------------------------------------------
 
@@ -163,7 +264,7 @@ contract SimulateV2 is Test {
 
     /// @dev Internal function to check if the epoch passed is not expired. Revert if expired.
     /// @param _epoch the epoch
-    function _epochNotExpired(ISsovV3 ssov, uint256 _epoch) private view {
+    function _epochNotExpired(uint256 _epoch) private view {
         _validate(!ssov.getEpochData(_epoch).expired, 7);
     }
 

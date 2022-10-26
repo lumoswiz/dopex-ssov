@@ -58,6 +58,23 @@ contract StrategyTest is Test {
         );
     }
 
+    function test_purchase() public {
+        Outputs memory output = sim.purchase(inputs[1]);
+        assertEq(output.inputs.epoch, 1);
+        assertEq(output.inputs.blockNumber, 23377592);
+
+        emit log_named_uint("strike", output.inputs.strike);
+        emit log_named_uint("premium", output.buyerDetails.premium);
+        emit log_named_uint("purchaseFee", output.buyerDetails.purchaseFee);
+    }
+
+    function test_settlementPrice() public {
+        emit log_named_uint(
+            "settlementPrice",
+            ISsovV3(ssov).getEpochData(inputs[0].epoch).settlementPrice
+        );
+    }
+
     /// -----------------------------------------------------------------------
     /// Test: Inputs (Python)
     /// -----------------------------------------------------------------------
