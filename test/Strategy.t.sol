@@ -30,9 +30,8 @@ contract StrategyTest is Test {
 
         ssov = 0x10FD85ec522C245a63239b9FC64434F58520bd1f; // weekly dpx calls V3
 
-        allocateInputs();
-
         setupFork();
+        allocateInputs();
         deploySimulate();
 
         /* === END USER INPUT ===*/
@@ -44,6 +43,7 @@ contract StrategyTest is Test {
 
     function test_deposit() public {
         Outputs memory output = sim.deposit(inputs[0]);
+
         assertEq(output.inputs.epoch, 1);
         assertEq(output.inputs.blockNumber, 22962396);
 
@@ -85,6 +85,7 @@ contract StrategyTest is Test {
         Inputs memory input = inputs[1];
 
         emit log_named_uint("amount", input.amount);
+        emit log_named_uint("strike", input.strike);
     }
 
     function test_getInputs() public {
@@ -196,12 +197,17 @@ contract StrategyTest is Test {
                 uint256 _txType
             ) = getInputs(i);
 
+            // forked environment initiated in `setUp`. This function has to be called after `setupFork`.
+            uint256 strike = ISsovV3(ssov).getEpochData(_epoch).strikes[
+                _strikeIndex
+            ];
+
             inputs.push(
                 Inputs({
                     epoch: _epoch,
                     blockNumber: _blockNumber,
                     strikeIndex: _strikeIndex,
-                    strike: 0,
+                    strike: strike,
                     amount: _amount,
                     txType: _txType
                 })

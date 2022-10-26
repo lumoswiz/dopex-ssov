@@ -3,6 +3,7 @@ pragma solidity ^0.8.0;
 
 import "forge-std/Test.sol";
 import "../structs/Structs.sol";
+import "./OutputId.sol";
 
 // Interfaces
 import {ISsovV3} from "../interfaces/ISsovV3.sol";
@@ -13,12 +14,16 @@ import {IOptionPricing} from "../interfaces/IOptionPricing.sol";
 
 contract SimulateV2 is Test {
     using stdStorage for StdStorage;
+    using OutputId for Outputs;
 
     ISsovV3 public ssov;
 
     uint256 internal constant OPTIONS_PRECISION = 1e18;
     uint256 internal constant DEFAULT_PRECISION = 1e8;
     uint256 internal constant REWARD_PRECISION = 1e18;
+
+    mapping(bytes32 => Outputs) public buyerOutput;
+    mapping(bytes32 => Outputs) public writerOutput;
 
     constructor(ISsovV3 _ssov) {
         ssov = _ssov;
@@ -31,6 +36,7 @@ contract SimulateV2 is Test {
         uint256 epoch_ = input.epoch;
         uint256 blockNumber_ = input.blockNumber;
         uint256 strikeIndex_ = input.strikeIndex;
+        uint256 strike_ = input.strike;
         uint256 amount_ = input.amount;
         uint256 txType_ = input.txType;
 
@@ -38,11 +44,8 @@ contract SimulateV2 is Test {
 
         setupForkBlockSpecified(blockNumber_);
         _epochNotExpired(epoch_);
-
         _valueNotZero(amount_);
-
-        uint256 strike = ssov.getEpochData(epoch_).strikes[strikeIndex_];
-        _valueNotZero(strike);
+        _valueNotZero(strike_);
 
         uint256[] memory rewardDistributionRatios = _updateRewards(
             _getRewards()
@@ -50,7 +53,7 @@ contract SimulateV2 is Test {
 
         uint256 checkpointIndex = ssov.getEpochStrikeCheckpointsLength(
             epoch_,
-            strike
+            strike_
         ) - 1;
 
         output = Outputs({
@@ -60,7 +63,7 @@ contract SimulateV2 is Test {
                 strikeIndex: strikeIndex_,
                 amount: amount_,
                 txType: txType_,
-                strike: strike
+                strike: strike_
             }),
             writerDetails: WriterDetails({
                 checkpointIndex: checkpointIndex,
@@ -70,6 +73,9 @@ contract SimulateV2 is Test {
             }),
             buyerDetails: BuyerDetails({premium: 0, purchaseFee: 0, netPnl: 0})
         });
+
+        // Update writer state
+        writerOutput[output.compute()] = output;
     }
 
     function purchase(Inputs calldata input)
@@ -116,7 +122,12 @@ contract SimulateV2 is Test {
                 netPnl: 0
             })
         });
+
+        // Update buyer state
+        buyerOutput[output.compute()] = output;
     }
+
+    function settle(Outputs memory output) public {}
 
     /// -----------------------------------------------------------------------
     /// Helper functions: deposit
