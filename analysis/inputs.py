@@ -19,14 +19,11 @@ def get_inputs(args):
     amount = df.iloc[args.index]["amount"]
     txType = df.iloc[args.index]["txType"]
 
-    # convert amount to wei
-    amount *= 10 ** 18
-
     enc_e = encode_single("uint256", (int(epoch)))
     enc_b = encode_single("uint256", int(blockNumber))
     enc_s = encode_single("uint256", int(strikeIndex))
     enc_a = encode_single("uint256", int(amount))
-    enc_t = encode_single("bool", bool(txType))
+    enc_t = encode_single("uint256", int(txType))
 
     ## prepend 0x for FFI parsing
     print("0x" + enc_e.hex() + enc_b.hex() + enc_s.hex() + enc_a.hex() + enc_t.hex())

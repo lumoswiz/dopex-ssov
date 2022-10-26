@@ -85,7 +85,7 @@ contract StrategyTest is Test {
             uint256 _blockNumber,
             uint256 _strikeIndex,
             uint256 _amount,
-            bool _txType
+            uint256 _txType
         )
     {
         string[] memory inputs = new string[](5);
@@ -97,8 +97,9 @@ contract StrategyTest is Test {
         bytes memory res = vm.ffi(inputs);
         (_epoch, _blockNumber, _strikeIndex, _amount, _txType) = abi.decode(
             res,
-            (uint256, uint256, uint256, uint256, bool)
+            (uint256, uint256, uint256, uint256, uint256)
         );
+        _amount = _amount * 10**18;
     }
 
     function getInputLength() public returns (uint256 l) {
@@ -110,15 +111,31 @@ contract StrategyTest is Test {
         l = abi.decode(res, (uint256));
     }
 
+    function test_loopOverInputs() public {
+        uint256 l = getInputLength();
+
+        for (uint256 i; i < l; ++i) {
+            (uint256 e, uint256 b, uint256 s, uint256 a, uint256 t) = getInputs(
+                i
+            );
+
+            emit log_named_uint("epoch", e);
+            emit log_named_uint("blockNumber", b);
+            emit log_named_uint("strikeIndex", s);
+            emit log_named_uint("amount", a);
+            emit log_named_uint("txType", t);
+        }
+    }
+
     function test_getInputs() public {
-        (uint256 e, uint256 b, uint256 s, uint256 a, bool t) = getInputs(0);
+        (uint256 e, uint256 b, uint256 s, uint256 a, uint256 t) = getInputs(1);
         uint256 l = getInputLength();
 
         emit log_uint(e);
         emit log_uint(b);
         emit log_uint(s);
         emit log_uint(a);
-        assertEq(t, false);
+        emit log_uint(t);
 
         emit log_named_uint("length inputs", l);
     }
