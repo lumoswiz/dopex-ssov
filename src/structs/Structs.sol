@@ -13,6 +13,7 @@ struct Inputs {
     uint256 strikeIndex;
     uint256 amount;
     uint256 txType; // 0 -> deposit, 1 -> purchase
+    uint256 strike;
 }
 
 struct WriterDetails {

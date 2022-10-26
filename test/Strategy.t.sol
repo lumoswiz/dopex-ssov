@@ -11,7 +11,7 @@ import {IERC20} from "../src/interfaces/IERC20.sol";
 import {IVolatilityOracle} from "../src/interfaces/IVolatilityOracle.sol";
 
 // Contracts
-import {Simulate} from "../src/simulate/Simulate.sol";
+import {SimulateV2} from "../src/simulate/SimulateV2.sol";
 
 // Structs
 import "../src/structs/Structs.sol";
@@ -19,7 +19,7 @@ import "../src/structs/Structs.sol";
 contract StrategyTest is Test {
     using Strings for uint256;
 
-    Simulate sim;
+    SimulateV2 sim;
 
     address public ssov;
 
@@ -36,6 +36,26 @@ contract StrategyTest is Test {
         deploySimulate();
 
         /* === END USER INPUT ===*/
+    }
+
+    /// -----------------------------------------------------------------------
+    /// Test: SimulateV2
+    /// -----------------------------------------------------------------------
+
+    function test_deposit() public {
+        Outputs memory output = sim.deposit(inputs[0]);
+        assertEq(output.inputs.epoch, 1);
+        assertEq(output.inputs.blockNumber, 22962396);
+
+        emit log_named_uint("strike", output.inputs.strike);
+        emit log_named_uint(
+            "checkpointIndex",
+            output.writerDetails.checkpointIndex
+        );
+        emit log_named_array(
+            "rewardDistributionRatios",
+            output.writerDetails.rewardDistributionRatios
+        );
     }
 
     /// -----------------------------------------------------------------------
@@ -84,7 +104,7 @@ contract StrategyTest is Test {
     /// -----------------------------------------------------------------------
 
     function deploySimulate() public {
-        sim = new Simulate();
+        sim = new SimulateV2(ISsovV3(ssov));
         vm.makePersistent(address(sim));
     }
 
@@ -164,6 +184,7 @@ contract StrategyTest is Test {
                     epoch: _epoch,
                     blockNumber: _blockNumber,
                     strikeIndex: _strikeIndex,
+                    strike: 0,
                     amount: _amount,
                     txType: _txType
                 })
