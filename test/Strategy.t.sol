@@ -21,12 +21,41 @@ contract StrategyTest is Test {
     address internal ssov;
     uint256 internal epoch;
 
+    Actions[] public actions;
+
     function setUp() public {
         /*=== USER INPUT REQUIRED ===*/
 
         ssov = 0x10FD85ec522C245a63239b9FC64434F58520bd1f; // weekly dpx calls V3
 
+        allocateInputs();
+
         /* === END USER INPUT ===*/
+    }
+
+    /// -----------------------------------------------------------------------
+    /// Test: Inputs (Python)
+    /// -----------------------------------------------------------------------
+
+    function test_allocateInputs() public {
+        assertEq(actions.length, getInputLength(), "something went wrong");
+
+        Actions memory action = actions[1];
+
+        emit log_named_uint("amount", action.amount);
+    }
+
+    function test_getInputs() public {
+        (uint256 e, uint256 b, uint256 s, uint256 a, uint256 t) = getInputs(2);
+        uint256 l = getInputLength();
+
+        emit log_uint(e);
+        emit log_uint(b);
+        emit log_uint(s);
+        emit log_uint(a);
+        emit log_uint(t);
+
+        emit log_named_uint("length inputs", l);
     }
 
     /// -----------------------------------------------------------------------
@@ -75,7 +104,7 @@ contract StrategyTest is Test {
         uint256 blockNumber;
         uint256 strikeIndex;
         uint256 amount;
-        bool txType; // 0 -> deposit, 1 -> purchase
+        uint256 txType; // 0 -> deposit, 1 -> purchase
     }
 
     function getInputs(uint256 _idx)
@@ -111,32 +140,28 @@ contract StrategyTest is Test {
         l = abi.decode(res, (uint256));
     }
 
-    function test_loopOverInputs() public {
-        uint256 l = getInputLength();
+    function allocateInputs() public {
+        // Get length of inputs
+        uint256 inputsLength = getInputLength();
 
-        for (uint256 i; i < l; ++i) {
-            (uint256 e, uint256 b, uint256 s, uint256 a, uint256 t) = getInputs(
-                i
+        for (uint256 i; i < inputsLength; ++i) {
+            (
+                uint256 _epoch,
+                uint256 _blockNumber,
+                uint256 _strikeIndex,
+                uint256 _amount,
+                uint256 _txType
+            ) = getInputs(i);
+
+            actions.push(
+                Actions({
+                    epoch: _epoch,
+                    blockNumber: _blockNumber,
+                    strikeIndex: _strikeIndex,
+                    amount: _amount,
+                    txType: _txType
+                })
             );
-
-            emit log_named_uint("epoch", e);
-            emit log_named_uint("blockNumber", b);
-            emit log_named_uint("strikeIndex", s);
-            emit log_named_uint("amount", a);
-            emit log_named_uint("txType", t);
         }
-    }
-
-    function test_getInputs() public {
-        (uint256 e, uint256 b, uint256 s, uint256 a, uint256 t) = getInputs(1);
-        uint256 l = getInputLength();
-
-        emit log_uint(e);
-        emit log_uint(b);
-        emit log_uint(s);
-        emit log_uint(a);
-        emit log_uint(t);
-
-        emit log_named_uint("length inputs", l);
     }
 }
