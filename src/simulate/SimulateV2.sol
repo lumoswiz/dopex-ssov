@@ -115,6 +115,171 @@ contract SimulateV2 is Test {
         buys[key].buyerDetails.netPnl = netPnl;
     }
 
+    function withdraw(Outputs calldata output) public {
+        _validate(output.inputs.txType == 0, 20);
+
+        setupFork();
+        _epochExpired(output.inputs.epoch);
+        _valueNotZero(output.inputs.amount);
+        _valueNotZero(output.inputs.strike);
+
+        bytes32 key = output.inputs.compute();
+
+        uint256 extractedAmount;
+        uint256 calculatedAccruedPremium;
+        uint256 pointer = output.writerDetails.checkpointIndex;
+
+        while (
+            (extractedAmount < output.inputs.amount) &&
+            (pointer <
+                ssov.getEpochStrikeCheckpointsLength(
+                    output.inputs.epoch,
+                    output.inputs.strike
+                ))
+        ) {
+            uint256 _remainingRequired = output.inputs.amount - extractedAmount;
+
+            if (
+                ssov
+                    .checkpoints(
+                        output.inputs.epoch,
+                        output.inputs.strike,
+                        pointer
+                    )
+                    .activeCollateral >= _remainingRequired
+            ) {
+                extractedAmount += _remainingRequired;
+                calculatedAccruedPremium +=
+                    (((output.inputs.amount * DEFAULT_PRECISION) /
+                        ssov
+                            .checkpoints(
+                                output.inputs.epoch,
+                                output.inputs.strike,
+                                pointer
+                            )
+                            .activeCollateral) *
+                        ssov
+                            .checkpoints(
+                                output.inputs.epoch,
+                                output.inputs.strike,
+                                pointer
+                            )
+                            .accruedPremium) /
+                    DEFAULT_PRECISION;
+            } else {
+                extractedAmount += ssov
+                    .checkpoints(
+                        output.inputs.epoch,
+                        output.inputs.strike,
+                        pointer
+                    )
+                    .activeCollateral;
+                calculatedAccruedPremium += ssov
+                    .checkpoints(
+                        output.inputs.epoch,
+                        output.inputs.strike,
+                        pointer
+                    )
+                    .accruedPremium;
+                pointer += 1;
+            }
+        }
+
+        uint256 accruedPremium = ((ssov
+            .checkpoints(
+                output.inputs.epoch,
+                output.inputs.strike,
+                output.writerDetails.checkpointIndex
+            )
+            .accruedPremium + calculatedAccruedPremium) *
+            output.inputs.amount) /
+            ssov
+                .checkpoints(
+                    output.inputs.epoch,
+                    output.inputs.strike,
+                    output.writerDetails.checkpointIndex
+                )
+                .totalCollateral;
+
+        uint256 collateralTokenWithdrawAmount = ((ssov
+            .checkpoints(
+                output.inputs.epoch,
+                output.inputs.strike,
+                output.writerDetails.checkpointIndex
+            )
+            .totalCollateral -
+            _calculatePnl(
+                ssov.getEpochData(output.inputs.epoch).settlementPrice,
+                output.inputs.strike,
+                output.inputs.amount,
+                ssov
+                    .getEpochData(output.inputs.epoch)
+                    .settlementCollateralExchangeRate
+            )) * output.inputs.amount) /
+            ssov
+                .checkpoints(
+                    output.inputs.epoch,
+                    output.inputs.strike,
+                    output.writerDetails.checkpointIndex
+                )
+                .totalCollateral;
+
+        // Add premiums
+        collateralTokenWithdrawAmount += accruedPremium;
+
+        uint256[] memory rewardTokenWithdrawAmounts = getUintArray(
+            ssov
+                .getEpochData(output.inputs.epoch)
+                .rewardTokensToDistribute
+                .length
+        );
+
+        // Calculate rewards
+        for (uint256 i; i < rewardTokenWithdrawAmounts.length; ) {
+            rewardTokenWithdrawAmounts[i] +=
+                ((ssov
+                    .getEpochData(output.inputs.epoch)
+                    .rewardDistributionRatios[i] -
+                    output.writerDetails.rewardDistributionRatios[i]) *
+                    output.inputs.amount) /
+                ssov.collateralPrecision();
+
+            if (
+                ssov
+                    .getEpochStrikeData(
+                        output.inputs.epoch,
+                        output.inputs.strike
+                    )
+                    .totalPremiums > 0
+            )
+                rewardTokenWithdrawAmounts[i] +=
+                    (accruedPremium *
+                        ssov
+                            .getEpochStrikeData(
+                                output.inputs.epoch,
+                                output.inputs.strike
+                            )
+                            .rewardStoredForPremiums[i]) /
+                    ssov
+                        .getEpochStrikeData(
+                            output.inputs.epoch,
+                            output.inputs.strike
+                        )
+                        .totalPremiums;
+
+            unchecked {
+                ++i;
+            }
+        }
+
+        writes[key]
+            .writerDetails
+            .collateralTokenWithdrawAmount = collateralTokenWithdrawAmount;
+        writes[key]
+            .writerDetails
+            .rewardTokenWithdrawAmounts = rewardTokenWithdrawAmounts;
+    }
+
     /// -----------------------------------------------------------------------
     /// Helper functions: deposit
     /// -----------------------------------------------------------------------

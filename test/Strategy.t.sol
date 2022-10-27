@@ -43,7 +43,7 @@ contract StrategyTest is Test {
     /// Test: SimulateV2
     /// -----------------------------------------------------------------------
 
-    function test_deposit() public {
+    function test_depositThenWithdraw() public {
         Inputs memory input = inputs[0];
 
         bytes32 key = input.compute();
@@ -52,9 +52,9 @@ contract StrategyTest is Test {
 
         Outputs memory output = sim.getWrite(key);
 
-        //        (, WriterDetails memory writer, BuyerDetails memory buyer) = sim.writes(
-        //            key
-        //        );
+        sim.withdraw(output);
+
+        output = sim.getWrite(key);
 
         emit log_named_uint(
             "checkpointIndex",
@@ -87,6 +87,29 @@ contract StrategyTest is Test {
         Outputs memory output = sim.getBuy(key);
 
         sim.settle(output);
+
+        output = sim.getBuy(key);
+
+        emit log_named_uint(
+            "checkpointIndex",
+            output.writerDetails.checkpointIndex
+        );
+        emit log_named_uint(
+            "collateralTokenWithdrawAmount",
+            output.writerDetails.collateralTokenWithdrawAmount
+        );
+        emit log_named_array(
+            "rewardDistributionRatios",
+            output.writerDetails.rewardDistributionRatios
+        );
+        emit log_named_array(
+            "rewardTokenWithdrawAmounts",
+            output.writerDetails.rewardTokenWithdrawAmounts
+        );
+
+        emit log_named_uint("premium", output.buyerDetails.premium);
+        emit log_named_uint("purchaseFee", output.buyerDetails.purchaseFee);
+        emit log_named_uint("netPnl", output.buyerDetails.netPnl);
     }
 
     /// -----------------------------------------------------------------------
