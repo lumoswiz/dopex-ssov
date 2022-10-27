@@ -3,7 +3,7 @@ pragma solidity ^0.8.0;
 
 import "forge-std/Test.sol";
 import "../structs/Structs.sol";
-import "./OutputId.sol";
+import "./Key.sol";
 
 // Interfaces
 import {ISsovV3} from "../interfaces/ISsovV3.sol";
@@ -14,7 +14,7 @@ import {IOptionPricing} from "../interfaces/IOptionPricing.sol";
 
 contract SimulateV2 is Test {
     using stdStorage for StdStorage;
-    using OutputId for Outputs;
+    using Key for Inputs;
 
     ISsovV3 public ssov;
 
@@ -22,112 +22,98 @@ contract SimulateV2 is Test {
     uint256 internal constant DEFAULT_PRECISION = 1e8;
     uint256 internal constant REWARD_PRECISION = 1e18;
 
-    mapping(bytes32 => Outputs) public buyerOutput;
-    mapping(bytes32 => Outputs) public writerOutput;
+    mapping(bytes32 => Outputs) public buys;
+    mapping(bytes32 => Outputs) public writes;
 
     constructor(ISsovV3 _ssov) {
         ssov = _ssov;
     }
 
-    function deposit(Inputs calldata input)
-        public
-        returns (Outputs memory output)
-    {
-        uint256 epoch_ = input.epoch;
-        uint256 blockNumber_ = input.blockNumber;
-        uint256 strikeIndex_ = input.strikeIndex;
-        uint256 strike_ = input.strike;
-        uint256 amount_ = input.amount;
-        uint256 txType_ = input.txType;
+    function deposit(Inputs calldata input) public {
+        _validate(input.txType == 0, 20);
+        setupForkBlockSpecified(input.blockNumber);
+        _epochNotExpired(input.epoch);
+        _valueNotZero(input.amount);
+        _valueNotZero(input.strike);
 
-        _validate(txType_ == 0, 20);
-
-        setupForkBlockSpecified(blockNumber_);
-        _epochNotExpired(epoch_);
-        _valueNotZero(amount_);
-        _valueNotZero(strike_);
+        bytes32 key = input.compute();
 
         uint256[] memory rewardDistributionRatios = _updateRewards(
             _getRewards()
         );
 
         uint256 checkpointIndex = ssov.getEpochStrikeCheckpointsLength(
-            epoch_,
-            strike_
+            input.epoch,
+            input.strike
         ) - 1;
 
-        output = Outputs({
-            inputs: Inputs({
-                epoch: epoch_,
-                blockNumber: blockNumber_,
-                strikeIndex: strikeIndex_,
-                amount: amount_,
-                txType: txType_,
-                strike: strike_
-            }),
-            writerDetails: WriterDetails({
-                checkpointIndex: checkpointIndex,
-                collateralTokenWithdrawAmount: 0,
-                rewardDistributionRatios: rewardDistributionRatios,
-                rewardTokenWithdrawAmounts: new uint256[](0)
-            }),
-            buyerDetails: BuyerDetails({premium: 0, purchaseFee: 0, netPnl: 0})
-        });
-
-        // Update writer state
-        writerOutput[output.compute()] = output;
+        writes[key].inputs = input;
+        writes[key].writerDetails.checkpointIndex = checkpointIndex;
+        writes[key]
+            .writerDetails
+            .rewardDistributionRatios = rewardDistributionRatios;
     }
 
-    function purchase(Inputs calldata input)
-        public
-        returns (Outputs memory output)
-    {
-        uint256 epoch_ = input.epoch;
-        uint256 blockNumber_ = input.blockNumber;
-        uint256 strikeIndex_ = input.strikeIndex;
-        uint256 amount_ = input.amount;
-        uint256 txType_ = input.txType;
+    function purchase(Inputs calldata input) public {
+        _validate(input.txType == 1, 21);
 
-        _validate(txType_ == 1, 21);
+        setupForkBlockSpecified(input.blockNumber);
+        _epochNotExpired(input.epoch);
+        _valueNotZero(input.amount);
+        _valueNotZero(input.strike);
 
-        setupForkBlockSpecified(blockNumber_);
-        _epochNotExpired(epoch_);
+        bytes32 key = input.compute();
 
-        _valueNotZero(amount_);
+        uint256 premium = _calculatePremium(
+            input.epoch,
+            input.strike,
+            input.amount
+        );
+        uint256 purchaseFee = _calculatePurchaseFees(
+            input.strike,
+            input.amount
+        );
 
-        uint256 strike = ssov.getEpochData(epoch_).strikes[strikeIndex_];
-        _valueNotZero(strike);
-
-        uint256 premium = _calculatePremium(epoch_, strike, amount_);
-        uint256 purchaseFee = _calculatePurchaseFees(strike, amount_);
-
-        output = Outputs({
-            inputs: Inputs({
-                epoch: epoch_,
-                blockNumber: blockNumber_,
-                strikeIndex: strikeIndex_,
-                amount: amount_,
-                txType: txType_,
-                strike: strike
-            }),
-            writerDetails: WriterDetails({
-                checkpointIndex: 0,
-                collateralTokenWithdrawAmount: 0,
-                rewardDistributionRatios: new uint256[](0),
-                rewardTokenWithdrawAmounts: new uint256[](0)
-            }),
-            buyerDetails: BuyerDetails({
-                premium: premium,
-                purchaseFee: purchaseFee,
-                netPnl: 0
-            })
-        });
-
-        // Update buyer state
-        buyerOutput[output.compute()] = output;
+        buys[key].inputs = input;
+        buys[key].buyerDetails.premium = premium;
+        buys[key].buyerDetails.purchaseFee = purchaseFee;
     }
 
-    function settle(Outputs memory output) public {}
+    function settle(Outputs calldata output) public {
+        _validate(output.inputs.txType == 1, 21);
+
+        setupFork();
+        _epochExpired(output.inputs.epoch);
+        _valueNotZero(output.inputs.amount);
+        _valueNotZero(output.inputs.strike);
+
+        bytes32 key = output.inputs.compute();
+
+        uint256 settlementPrice = ssov
+            .getEpochData(output.inputs.epoch)
+            .settlementPrice;
+
+        uint256 pnl = _calculatePnl(
+            settlementPrice,
+            output.inputs.strike,
+            output.inputs.amount,
+            ssov
+                .getEpochData(output.inputs.epoch)
+                .settlementCollateralExchangeRate
+        );
+
+        uint256 settlementFee = _calculateSettlementFees(pnl);
+
+        uint256 netPnl;
+
+        if (pnl == 0) {
+            netPnl = 0;
+        } else {
+            netPnl = pnl - settlementFee;
+        }
+
+        buys[key].buyerDetails.netPnl = netPnl;
+    }
 
     /// -----------------------------------------------------------------------
     /// Helper functions: deposit
@@ -257,6 +243,62 @@ contract SimulateV2 is Test {
     }
 
     /// -----------------------------------------------------------------------
+    /// Helper functions: settle
+    /// -----------------------------------------------------------------------
+
+    function _calculatePnl(
+        uint256 price,
+        uint256 strike,
+        uint256 amount,
+        uint256 collateralExchangeRate
+    ) public view returns (uint256) {
+        if (ssov.isPut())
+            return
+                strike > price
+                    ? ((strike - price) *
+                        amount *
+                        ssov.collateralPrecision() *
+                        collateralExchangeRate) /
+                        (OPTIONS_PRECISION *
+                            DEFAULT_PRECISION *
+                            DEFAULT_PRECISION)
+                    : 0;
+        return
+            price > strike
+                ? (((price - strike) *
+                    amount *
+                    ssov.collateralPrecision() *
+                    collateralExchangeRate) / price) /
+                    (OPTIONS_PRECISION * DEFAULT_PRECISION)
+                : 0;
+    }
+
+    function _calculateSettlementFees(uint256 pnl)
+        public
+        returns (uint256 fee)
+    {
+        uint256 settlementFeePercentage = stdstore
+            .target(ssov.addresses().feeStrategy)
+            .sig("ssovFeeStructures(address)")
+            .with_key(address(ssov))
+            .depth(1)
+            .read_uint();
+
+        fee = (settlementFeePercentage * pnl) / 1e10;
+    }
+
+    /// -----------------------------------------------------------------------
+    /// View functions
+    /// -----------------------------------------------------------------------
+    function getBuy(bytes32 key) public view returns (Outputs memory output) {
+        return buys[key];
+    }
+
+    function getWrite(bytes32 key) public view returns (Outputs memory output) {
+        return writes[key];
+    }
+
+    /// -----------------------------------------------------------------------
     /// Private functions for reverts
     /// -----------------------------------------------------------------------
 
@@ -277,6 +319,12 @@ contract SimulateV2 is Test {
     /// @param _epoch the epoch
     function _epochNotExpired(uint256 _epoch) private view {
         _validate(!ssov.getEpochData(_epoch).expired, 7);
+    }
+
+    /// @dev Internal function to check if the epoch passed is expired. Revert if not expired.
+    /// @param _epoch the epoch
+    function _epochExpired(uint256 _epoch) private view {
+        _validate(ssov.getEpochData(_epoch).expired, 9);
     }
 
     /// -----------------------------------------------------------------------

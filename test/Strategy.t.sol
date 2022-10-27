@@ -3,6 +3,7 @@ pragma solidity ^0.8.0;
 
 import "forge-std/Test.sol";
 import {Strings} from "openzeppelin-contracts/utils/Strings.sol";
+import "../src/simulate/Key.sol";
 
 // Interfaces
 import {ISim} from "../src/interfaces/ISim.sol";
@@ -18,6 +19,7 @@ import "../src/structs/Structs.sol";
 
 contract StrategyTest is Test {
     using Strings for uint256;
+    using Key for Inputs;
 
     SimulateV2 sim;
 
@@ -29,10 +31,10 @@ contract StrategyTest is Test {
         /*=== USER INPUT REQUIRED ===*/
 
         ssov = 0x10FD85ec522C245a63239b9FC64434F58520bd1f; // weekly dpx calls V3
-
-        setupFork();
-        allocateInputs();
         deploySimulate();
+        setupFork();
+
+        allocateInputs();
 
         /* === END USER INPUT ===*/
     }
@@ -42,37 +44,49 @@ contract StrategyTest is Test {
     /// -----------------------------------------------------------------------
 
     function test_deposit() public {
-        Outputs memory output = sim.deposit(inputs[0]);
+        Inputs memory input = inputs[0];
 
-        assertEq(output.inputs.epoch, 1);
-        assertEq(output.inputs.blockNumber, 22962396);
+        bytes32 key = input.compute();
 
-        emit log_named_uint("strike", output.inputs.strike);
+        sim.deposit(input);
+
+        Outputs memory output = sim.getWrite(key);
+
+        //        (, WriterDetails memory writer, BuyerDetails memory buyer) = sim.writes(
+        //            key
+        //        );
+
         emit log_named_uint(
             "checkpointIndex",
             output.writerDetails.checkpointIndex
+        );
+        emit log_named_uint(
+            "collateralTokenWithdrawAmount",
+            output.writerDetails.collateralTokenWithdrawAmount
         );
         emit log_named_array(
             "rewardDistributionRatios",
             output.writerDetails.rewardDistributionRatios
         );
-    }
+        emit log_named_array(
+            "rewardTokenWithdrawAmounts",
+            output.writerDetails.rewardTokenWithdrawAmounts
+        );
 
-    function test_purchase() public {
-        Outputs memory output = sim.purchase(inputs[1]);
-        assertEq(output.inputs.epoch, 1);
-        assertEq(output.inputs.blockNumber, 23377592);
-
-        emit log_named_uint("strike", output.inputs.strike);
         emit log_named_uint("premium", output.buyerDetails.premium);
         emit log_named_uint("purchaseFee", output.buyerDetails.purchaseFee);
+        emit log_named_uint("netPnl", output.buyerDetails.netPnl);
     }
 
-    function test_settlementPrice() public {
-        emit log_named_uint(
-            "settlementPrice",
-            ISsovV3(ssov).getEpochData(inputs[0].epoch).settlementPrice
-        );
+    function test_settle() public {
+        Inputs memory input = inputs[1];
+        bytes32 key = input.compute();
+
+        sim.purchase(input);
+
+        Outputs memory output = sim.getBuy(key);
+
+        sim.settle(output);
     }
 
     /// -----------------------------------------------------------------------
