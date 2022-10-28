@@ -34,7 +34,7 @@ contract StrategyTest is Test {
         deploySimulate();
         setupFork();
 
-        allocateInputs();
+        // allocateInputs();
 
         /* === END USER INPUT ===*/
     }
@@ -78,7 +78,7 @@ contract StrategyTest is Test {
         emit log_named_uint("netPnl", output.buyerDetails.netPnl);
     }
 
-    function test_settle() public {
+    function test_purchaseThenSettle() public {
         Inputs memory input = inputs[1];
         bytes32 key = input.compute();
 
@@ -110,6 +110,32 @@ contract StrategyTest is Test {
         emit log_named_uint("premium", output.buyerDetails.premium);
         emit log_named_uint("purchaseFee", output.buyerDetails.purchaseFee);
         emit log_named_uint("netPnl", output.buyerDetails.netPnl);
+    }
+
+    /// -----------------------------------------------------------------------
+    /// Test: Outputs to CSV
+    /// -----------------------------------------------------------------------
+    function test_outputs() public {
+        uint256[] memory arr = new uint256[](2);
+        arr[0] = 1e18;
+        arr[1] = 2.5e18;
+
+        string memory path = "./analysis/output.csv";
+
+        bytes memory data = abi.encode(arr);
+
+        string memory dataString = vm.toString(data);
+
+        vm.writeLine(path, dataString);
+    }
+
+    function writeHeaders() public {
+        string memory path = "./analysis/output.csv";
+
+        string
+            memory headers = "epoch,blockNumber,strikeIndex,strike,amount,txType,premium,purchaseFee,netPnl,collateralTokenWithdrawAmount,rewardTokenWithdrawAmounts_DPX,rewardTokenWithdrawAmounts_JONES";
+
+        vm.writeLine(path, headers);
     }
 
     /// -----------------------------------------------------------------------
