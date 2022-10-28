@@ -34,7 +34,7 @@ contract StrategyTest is Test {
         deploySimulate();
         setupFork();
 
-        // allocateInputs();
+        allocateInputs();
 
         /* === END USER INPUT ===*/
     }
@@ -55,27 +55,6 @@ contract StrategyTest is Test {
         sim.withdraw(output);
 
         output = sim.getWrite(key);
-
-        emit log_named_uint(
-            "checkpointIndex",
-            output.writerDetails.checkpointIndex
-        );
-        emit log_named_uint(
-            "collateralTokenWithdrawAmount",
-            output.writerDetails.collateralTokenWithdrawAmount
-        );
-        emit log_named_array(
-            "rewardDistributionRatios",
-            output.writerDetails.rewardDistributionRatios
-        );
-        emit log_named_array(
-            "rewardTokenWithdrawAmounts",
-            output.writerDetails.rewardTokenWithdrawAmounts
-        );
-
-        emit log_named_uint("premium", output.buyerDetails.premium);
-        emit log_named_uint("purchaseFee", output.buyerDetails.purchaseFee);
-        emit log_named_uint("netPnl", output.buyerDetails.netPnl);
     }
 
     function test_purchaseThenSettle() public {
@@ -98,13 +77,9 @@ contract StrategyTest is Test {
             "collateralTokenWithdrawAmount",
             output.writerDetails.collateralTokenWithdrawAmount
         );
-        emit log_named_array(
-            "rewardDistributionRatios",
-            output.writerDetails.rewardDistributionRatios
-        );
-        emit log_named_array(
+        emit log_named_uint(
             "rewardTokenWithdrawAmounts",
-            output.writerDetails.rewardTokenWithdrawAmounts
+            output.writerDetails.rewardTokenWithdrawAmounts.length
         );
 
         emit log_named_uint("premium", output.buyerDetails.premium);
@@ -115,27 +90,101 @@ contract StrategyTest is Test {
     /// -----------------------------------------------------------------------
     /// Test: Outputs to CSV
     /// -----------------------------------------------------------------------
-    function test_outputs() public {
-        uint256[] memory arr = new uint256[](2);
-        arr[0] = 1e18;
-        arr[1] = 2.5e18;
 
-        string memory path = "./analysis/output.csv";
+    function test_outputToStringDeposit() public {
+        // deposit -> withdraw sequence
+        Inputs memory input = inputs[0];
+        bytes32 key = input.compute();
+        sim.deposit(input);
+        Outputs memory output = sim.getWrite(key);
+        sim.withdraw(output);
+        output = sim.getWrite(key);
 
-        bytes memory data = abi.encode(arr);
+        // outputToString
+        string memory outputString = outputToString(output);
 
-        string memory dataString = vm.toString(data);
-
-        vm.writeLine(path, dataString);
+        emit log_string(outputString);
     }
 
-    function writeHeaders() public {
-        string memory path = "./analysis/output.csv";
+    function test_outputToStringPurchase() public {
+        // purchase -> settle
+        Inputs memory input = inputs[1];
+        bytes32 key = input.compute();
+        sim.purchase(input);
+        Outputs memory output = sim.getBuy(key);
+        sim.settle(output);
+        output = sim.getBuy(key);
 
-        string
-            memory headers = "epoch,blockNumber,strikeIndex,strike,amount,txType,premium,purchaseFee,netPnl,collateralTokenWithdrawAmount,rewardTokenWithdrawAmounts_DPX,rewardTokenWithdrawAmounts_JONES";
+        // outputToString
+        string memory outputString = outputToString(output);
 
-        vm.writeLine(path, headers);
+        emit log_string(outputString);
+    }
+
+    function test_outputToCsvDeposit() public {
+        // deposit -> withdraw sequence
+        Inputs memory input = inputs[0];
+        bytes32 key = input.compute();
+        sim.deposit(input);
+        Outputs memory output = sim.getWrite(key);
+        sim.withdraw(output);
+        output = sim.getWrite(key);
+
+        // outputToString
+        string memory outputString = outputToString(output);
+
+        writeHeaders();
+
+        vm.writeLine("./analysis/output.csv", outputString);
+    }
+
+    function test_outputToCsvPurchase() public {
+        // purchase -> settle
+        Inputs memory input = inputs[1];
+        bytes32 key = input.compute();
+        sim.purchase(input);
+        Outputs memory output = sim.getBuy(key);
+        sim.settle(output);
+        output = sim.getBuy(key);
+
+        // outputToString
+        string memory outputString = outputToString(output);
+
+        writeHeaders();
+
+        vm.writeLine("./analysis/output.csv", outputString);
+    }
+
+    function test_strategies() public {
+        writeHeaders();
+
+        for (uint256 i; i < inputs.length; ++i) {
+            if (inputs[i].txType == 0) {
+                // DEPOSIT
+                bytes32 key = inputs[i].compute();
+                sim.deposit(inputs[i]);
+                Outputs memory output = sim.getWrite(key);
+                sim.withdraw(output);
+                output = sim.getWrite(key);
+
+                string memory outputString = outputToString(output);
+
+                vm.writeLine("./analysis/output.csv", outputString);
+            }
+
+            if (inputs[i].txType == 1) {
+                // PURCHASE
+                bytes32 key = inputs[i].compute();
+                sim.purchase(inputs[i]);
+                Outputs memory output = sim.getBuy(key);
+                sim.settle(output);
+                output = sim.getBuy(key);
+
+                string memory outputString = outputToString(output);
+
+                vm.writeLine("./analysis/output.csv", outputString);
+            }
+        }
     }
 
     /// -----------------------------------------------------------------------
@@ -208,6 +257,52 @@ contract StrategyTest is Test {
         returns (uint256 strike)
     {
         return ISsovV3(ssov).getEpochData(_epoch).strikes[strikeIndex];
+    }
+
+    /// -----------------------------------------------------------------------
+    /// Helper Functions: Outputs -> CSV
+    /// -----------------------------------------------------------------------
+
+    function writeHeaders() public {
+        string memory path = "./analysis/output.csv";
+
+        string
+            memory headers = "epoch,blockNumber,strikeIndex,strike,amount,txType,premium,purchaseFee,netPnl,collateralTokenWithdrawAmount,rewardTokenWithdrawAmounts_DPX,rewardTokenWithdrawAmounts_JONES";
+
+        vm.writeLine(path, headers);
+    }
+
+    function outputToString(Outputs memory output)
+        public
+        returns (string memory outputs)
+    {
+        outputs = string(
+            abi.encodePacked(
+                vm.toString(output.inputs.epoch),
+                ",",
+                vm.toString(output.inputs.blockNumber),
+                ",",
+                vm.toString(output.inputs.strikeIndex),
+                ",",
+                vm.toString(output.inputs.strike),
+                ",",
+                vm.toString(output.inputs.amount),
+                ",",
+                vm.toString(output.inputs.txType),
+                ",",
+                vm.toString(output.buyerDetails.premium),
+                ",",
+                vm.toString(output.buyerDetails.purchaseFee),
+                ",",
+                vm.toString(output.buyerDetails.netPnl),
+                ",",
+                vm.toString(output.writerDetails.collateralTokenWithdrawAmount),
+                ",",
+                vm.toString(output.writerDetails.rewardTokenWithdrawAmounts[0]),
+                ",",
+                vm.toString(output.writerDetails.rewardTokenWithdrawAmounts[1])
+            )
+        );
     }
 
     /// -----------------------------------------------------------------------

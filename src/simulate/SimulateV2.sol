@@ -77,6 +77,8 @@ contract SimulateV2 is Test {
         buys[key].inputs = input;
         buys[key].buyerDetails.premium = premium;
         buys[key].buyerDetails.purchaseFee = purchaseFee;
+
+        buys[key].writerDetails.rewardTokenWithdrawAmounts = new uint256[](2);
     }
 
     function settle(Outputs calldata output) public {
@@ -115,16 +117,11 @@ contract SimulateV2 is Test {
         buys[key].buyerDetails.netPnl = netPnl;
     }
 
-    function withdraw(Outputs calldata output) public {
-        _validate(output.inputs.txType == 0, 20);
-
-        setupFork();
-        _epochExpired(output.inputs.epoch);
-        _valueNotZero(output.inputs.amount);
-        _valueNotZero(output.inputs.strike);
-
-        bytes32 key = output.inputs.compute();
-
+    function calculateAccruedPremium(Outputs calldata output)
+        public
+        view
+        returns (uint256 accruedPremium)
+    {
         uint256 extractedAmount;
         uint256 calculatedAccruedPremium;
         uint256 pointer = output.writerDetails.checkpointIndex;
@@ -185,14 +182,15 @@ contract SimulateV2 is Test {
             }
         }
 
-        uint256 accruedPremium = ((ssov
-            .checkpoints(
-                output.inputs.epoch,
-                output.inputs.strike,
-                output.writerDetails.checkpointIndex
-            )
-            .accruedPremium + calculatedAccruedPremium) *
-            output.inputs.amount) /
+        accruedPremium =
+            ((ssov
+                .checkpoints(
+                    output.inputs.epoch,
+                    output.inputs.strike,
+                    output.writerDetails.checkpointIndex
+                )
+                .accruedPremium + calculatedAccruedPremium) *
+                output.inputs.amount) /
             ssov
                 .checkpoints(
                     output.inputs.epoch,
@@ -200,6 +198,13 @@ contract SimulateV2 is Test {
                     output.writerDetails.checkpointIndex
                 )
                 .totalCollateral;
+    }
+
+    function calculateCollateralTokenWithdrawAmount(
+        Outputs calldata output,
+        uint256 accruedPremium
+    ) public {
+        bytes32 key = output.inputs.compute();
 
         uint256 collateralTokenWithdrawAmount = ((ssov
             .checkpoints(
@@ -226,6 +231,17 @@ contract SimulateV2 is Test {
 
         // Add premiums
         collateralTokenWithdrawAmount += accruedPremium;
+
+        writes[key]
+            .writerDetails
+            .collateralTokenWithdrawAmount = collateralTokenWithdrawAmount;
+    }
+
+    function calculateRewardTokenWithdrawAmounts(
+        Outputs calldata output,
+        uint256 accruedPremium
+    ) public {
+        bytes32 key = output.inputs.compute();
 
         uint256[] memory rewardTokenWithdrawAmounts = getUintArray(
             ssov
@@ -274,10 +290,20 @@ contract SimulateV2 is Test {
 
         writes[key]
             .writerDetails
-            .collateralTokenWithdrawAmount = collateralTokenWithdrawAmount;
-        writes[key]
-            .writerDetails
             .rewardTokenWithdrawAmounts = rewardTokenWithdrawAmounts;
+    }
+
+    function withdraw(Outputs calldata output) public {
+        _validate(output.inputs.txType == 0, 20);
+
+        setupFork();
+        _epochExpired(output.inputs.epoch);
+        _valueNotZero(output.inputs.amount);
+        _valueNotZero(output.inputs.strike);
+
+        uint256 accruedPremium = calculateAccruedPremium(output);
+        calculateCollateralTokenWithdrawAmount(output, accruedPremium);
+        calculateRewardTokenWithdrawAmounts(output, accruedPremium);
     }
 
     /// -----------------------------------------------------------------------
