@@ -11,7 +11,7 @@
 
 This project is an extension of [this](https://github.com/lumoswiz/DopexSsovBacktesting) project where I aimed to simplify the process for running backtests. The process to run a collection of backtests now involves:
 
-- Prepare a CSV containing transaction details (`epoch`, `blockNumber`, `strikeIndex`, `amount` and `txType`), save it to the analysis folder [here](./analysis/).
+- Prepare a CSV containing transaction details (`epoch`, `blockNumber`, `strikeIndex`, `amount` and `txType`), save it to the analysis folder [here](./analysis/). **Note:** deposit and purchase transactions set via `txType` equal to 0 and 1, respectively.
 - In the command line, run:
 
 ```sh
