@@ -16,7 +16,7 @@ def get_inputs(args):
     epoch = df.iloc[args.index]["epoch"]
     blockNumber = df.iloc[args.index]["blockNumber"]
     strikeIndex = df.iloc[args.index]["strikeIndex"]
-    amount = df.iloc[args.index]["amount"]
+    amount = df.iloc[args.index]["amount"] * 1e8
     txType = df.iloc[args.index]["txType"]
 
     enc_e = encode_single("uint256", (int(epoch)))

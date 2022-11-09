@@ -64,17 +64,60 @@ contract SimulateV2 is Test {
 
         bytes32 key = input.compute();
 
-        uint256 premium = _calculatePremium(
-            input.epoch,
-            input.strike,
-            input.amount
-        );
-        uint256 purchaseFee = _calculatePurchaseFees(
-            input.strike,
-            input.amount
-        );
+        // collateral check
+        uint256 availableCollateral = ISsovV3(ssov)
+            .getEpochStrikeData(input.epoch, input.strike)
+            .totalCollateral -
+            ISsovV3(ssov)
+                .getEpochStrikeData(input.epoch, input.strike)
+                .activeCollateral;
 
-        buys[key].inputs = input;
+        uint256 requiredCollateral = ISsovV3(ssov).isPut()
+            ? (input.amount *
+                input.strike *
+                ISsovV3(ssov).collateralPrecision() *
+                ISsovV3(ssov)
+                    .getEpochData(input.epoch)
+                    .collateralExchangeRate) / (1e34)
+            : (input.amount *
+                ISsovV3(ssov).getEpochData(input.epoch).collateralExchangeRate *
+                ISsovV3(ssov).collateralPrecision()) / (1e26);
+
+        uint256 premium;
+        uint256 purchaseFee;
+
+        if (requiredCollateral > availableCollateral) {
+            premium = _calculatePremium(
+                input.epoch,
+                input.strike,
+                availableCollateral
+            );
+
+            purchaseFee = _calculatePurchaseFees(
+                input.strike,
+                availableCollateral
+            );
+
+            buys[key].inputs = input;
+        } else {
+            premium = _calculatePremium(
+                input.epoch,
+                input.strike,
+                input.amount
+            );
+
+            purchaseFee = _calculatePurchaseFees(input.strike, input.amount);
+
+            buys[key].inputs = Inputs({
+                epoch: input.epoch,
+                blockNumber: input.blockNumber,
+                strikeIndex: input.strikeIndex,
+                amount: availableCollateral,
+                txType: input.txType,
+                strike: input.strike
+            });
+        }
+
         buys[key].buyerDetails.premium = premium;
         buys[key].buyerDetails.purchaseFee = purchaseFee;
 

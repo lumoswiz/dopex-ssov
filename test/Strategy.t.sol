@@ -40,6 +40,42 @@ contract StrategyTest is Test {
     }
 
     /// -----------------------------------------------------------------------
+    /// Test: Run Strategies
+    /// -----------------------------------------------------------------------
+
+    function test_runStrategies() public {
+        writeHeaders();
+
+        for (uint256 i; i < inputs.length; ++i) {
+            if (inputs[i].txType == 0) {
+                // DEPOSIT
+                bytes32 key = inputs[i].compute();
+                sim.deposit(inputs[i]);
+                Outputs memory output = sim.getWrite(key);
+                sim.withdraw(output);
+                output = sim.getWrite(key);
+
+                string memory outputString = outputToString(output);
+
+                vm.writeLine("./analysis/output.csv", outputString);
+            }
+
+            if (inputs[i].txType == 1) {
+                // PURCHASE
+                bytes32 key = inputs[i].compute();
+                sim.purchase(inputs[i]);
+                Outputs memory output = sim.getBuy(key);
+                sim.settle(output);
+                output = sim.getBuy(key);
+
+                string memory outputString = outputToString(output);
+
+                vm.writeLine("./analysis/output.csv", outputString);
+            }
+        }
+    }
+
+    /// -----------------------------------------------------------------------
     /// Test: SimulateV2
     /// -----------------------------------------------------------------------
 
@@ -153,38 +189,6 @@ contract StrategyTest is Test {
         writeHeaders();
 
         vm.writeLine("./analysis/output.csv", outputString);
-    }
-
-    function test_strategies() public {
-        writeHeaders();
-
-        for (uint256 i; i < inputs.length; ++i) {
-            if (inputs[i].txType == 0) {
-                // DEPOSIT
-                bytes32 key = inputs[i].compute();
-                sim.deposit(inputs[i]);
-                Outputs memory output = sim.getWrite(key);
-                sim.withdraw(output);
-                output = sim.getWrite(key);
-
-                string memory outputString = outputToString(output);
-
-                vm.writeLine("./analysis/output.csv", outputString);
-            }
-
-            if (inputs[i].txType == 1) {
-                // PURCHASE
-                bytes32 key = inputs[i].compute();
-                sim.purchase(inputs[i]);
-                Outputs memory output = sim.getBuy(key);
-                sim.settle(output);
-                output = sim.getBuy(key);
-
-                string memory outputString = outputToString(output);
-
-                vm.writeLine("./analysis/output.csv", outputString);
-            }
-        }
     }
 
     /// -----------------------------------------------------------------------
@@ -330,7 +334,7 @@ contract StrategyTest is Test {
             res,
             (uint256, uint256, uint256, uint256, uint256)
         );
-        _amount = _amount * 10**18;
+        _amount = _amount * 10**10;
     }
 
     function getInputLength() public returns (uint256 l) {
