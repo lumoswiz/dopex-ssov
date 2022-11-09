@@ -31,5 +31,8 @@ The error rate of this tool was assessed by comparing real SSOV transactions aga
 
 Results for the collateral token withdrawn and amount of DPX rewards are summarised in diagrams below.
 
+**Error collateral token (DPX) amount withdrawn**
 ![Collateral token withdrawn](/analysis/img/collateral_error.png)
+
+**Error DPX reward amounts**
 ![DPX reward amounts](/analysis/img/dpx_withdraw_error.png)
