@@ -12,7 +12,7 @@ import {IERC20} from "../src/interfaces/IERC20.sol";
 import {IVolatilityOracle} from "../src/interfaces/IVolatilityOracle.sol";
 
 // Contracts
-import {SimulateV2} from "../src/simulate/SimulateV2.sol";
+import {Simulate} from "../src/simulate/Simulate.sol";
 
 // Structs
 import "../src/structs/Structs.sol";
@@ -21,7 +21,7 @@ contract StrategyTest is Test {
     using Strings for uint256;
     using Key for Inputs;
 
-    SimulateV2 sim;
+    Simulate sim;
 
     address public ssov;
 
@@ -238,7 +238,7 @@ contract StrategyTest is Test {
     /// -----------------------------------------------------------------------
 
     function deploySimulate() public {
-        sim = new SimulateV2(ISsovV3(ssov));
+        sim = new Simulate(ISsovV3(ssov));
         vm.makePersistent(address(sim));
     }
 

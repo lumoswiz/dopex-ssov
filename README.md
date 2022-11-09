@@ -19,7 +19,7 @@ forge test --match-test test_runStrategies --ffi
 ```
 
 - This requires the use of the Foundry ffi cheatcode. Read about it [here](https://book.getfoundry.sh/cheatcodes/ffi).
-- After successfully running the test, the simulated ouptuts are saved in an `output.csv` file in the [analysis](./analysis/) folder.
+- After successfully running the test, the simulated ouptuts are saved in an `output.csv` file in the [analysis](./analysis/) folder. [Here](./analysis/example_output.csv) is an example output file.
 
 ## Error Plots
 

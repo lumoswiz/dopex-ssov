@@ -2,7 +2,8 @@
 pragma solidity ^0.8.0;
 
 import "forge-std/Test.sol";
-import {SimulateState} from "./SimulateState.sol";
+import "../structs/Structs.sol";
+import "./Key.sol";
 
 // Interfaces
 import {ISsovV3} from "../interfaces/ISsovV3.sol";
@@ -11,304 +12,352 @@ import {IFeeStrategy} from "../interfaces/IFeeStrategy.sol";
 import {IStakingStrategy} from "../interfaces/IStakingStrategy.sol";
 import {IOptionPricing} from "../interfaces/IOptionPricing.sol";
 
-import {Counters} from "openzeppelin-contracts/utils/Counters.sol";
-
-contract Simulate is Test, SimulateState {
+contract Simulate is Test {
     using stdStorage for StdStorage;
-    using Counters for Counters.Counter;
-    Counters.Counter public _depositIdCounter;
-    Counters.Counter public _purchaseIdCounter;
+    using Key for Inputs;
+
+    ISsovV3 public ssov;
 
     uint256 internal constant OPTIONS_PRECISION = 1e18;
     uint256 internal constant DEFAULT_PRECISION = 1e8;
     uint256 internal constant REWARD_PRECISION = 1e18;
 
-    /*=== DEPOSIT ===*/
+    mapping(bytes32 => Outputs) public buys;
+    mapping(bytes32 => Outputs) public writes;
 
-    function deposit(
-        ISsovV3 ssov,
-        uint256 epoch,
-        uint256 strikeIndex,
-        uint256 amount
-    ) public returns (uint256 depositId) {
-        _epochNotExpired(ISsovV3(ssov), epoch);
-        _valueNotZero(amount);
+    constructor(ISsovV3 _ssov) {
+        ssov = _ssov;
+    }
 
-        uint256 strike = ssov.getEpochData(epoch).strikes[strikeIndex];
-        _valueNotZero(strike);
+    function deposit(Inputs calldata input) public {
+        _validate(input.txType == 0, 20);
+        setupForkBlockSpecified(input.blockNumber);
+        _epochNotExpired(input.epoch);
+        _valueNotZero(input.amount);
+        _valueNotZero(input.strike);
+
+        bytes32 key = input.compute();
 
         uint256[] memory rewardDistributionRatios = _updateRewards(
-            ssov,
-            epoch,
-            _getRewards(ssov, epoch)
+            _getRewards()
         );
 
         uint256 checkpointIndex = ssov.getEpochStrikeCheckpointsLength(
-            epoch,
-            strike
+            input.epoch,
+            input.strike
         ) - 1;
 
-        depositId = getDepositId();
-
-        writePositions[depositId] = WritePosition({
-            epoch: epoch,
-            strike: strike,
-            collateralAmount: amount,
-            checkpointIndex: checkpointIndex,
-            rewardDistributionRatios: rewardDistributionRatios
-        });
+        writes[key].inputs = input;
+        writes[key].writerDetails.checkpointIndex = checkpointIndex;
+        writes[key]
+            .writerDetails
+            .rewardDistributionRatios = rewardDistributionRatios;
     }
 
-    /*=== PURCHASE ===*/
-    function purchase(
-        ISsovV3 ssov,
-        uint256 epoch,
-        uint256 strikeIndex,
-        uint256 amount
-    )
-        public
-        returns (
-            uint256 purchaseId,
-            uint256 premium,
-            uint256 purchaseFee
-        )
-    {
-        _valueNotZero(amount);
+    function purchase(Inputs calldata input) public {
+        _validate(input.txType == 1, 21);
 
-        (, uint256 epochExpiry) = ssov.getEpochTimes(epoch);
-        _validate(block.timestamp < epochExpiry, 5);
+        setupForkBlockSpecified(input.blockNumber);
+        _epochNotExpired(input.epoch);
+        _valueNotZero(input.amount);
+        _valueNotZero(input.strike);
 
-        uint256 strike = ssov.getEpochData(epoch).strikes[strikeIndex];
-        _valueNotZero(strike);
+        bytes32 key = input.compute();
 
-        // Get total premium for all options being purchased
-        premium = _calculatePremium(ssov, epoch, strike, amount);
+        // collateral check
+        uint256 availableCollateral = ISsovV3(ssov)
+            .getEpochStrikeData(input.epoch, input.strike)
+            .totalCollateral -
+            ISsovV3(ssov)
+                .getEpochStrikeData(input.epoch, input.strike)
+                .activeCollateral;
 
-        // Total fee charged
-        purchaseFee = _calculatePurchaseFees(ssov, strike, amount);
+        uint256 requiredCollateral = ISsovV3(ssov).isPut()
+            ? (input.amount *
+                input.strike *
+                ISsovV3(ssov).collateralPrecision() *
+                ISsovV3(ssov)
+                    .getEpochData(input.epoch)
+                    .collateralExchangeRate) / (1e34)
+            : (input.amount *
+                ISsovV3(ssov).getEpochData(input.epoch).collateralExchangeRate *
+                ISsovV3(ssov).collateralPrecision()) / (1e26);
 
-        purchaseId = getPurchaseId();
+        uint256 premium;
+        uint256 purchaseFee;
 
-        purchasePositions[purchaseId] = PurchasePosition({
-            epoch: epoch,
-            strike: strike,
-            amount: amount,
-            premium: premium,
-            purchaseFee: purchaseFee
-        });
+        if (requiredCollateral > availableCollateral) {
+            premium = _calculatePremium(
+                input.epoch,
+                input.strike,
+                availableCollateral
+            );
+
+            purchaseFee = _calculatePurchaseFees(
+                input.strike,
+                availableCollateral
+            );
+
+            buys[key].inputs = input;
+        } else {
+            premium = _calculatePremium(
+                input.epoch,
+                input.strike,
+                input.amount
+            );
+
+            purchaseFee = _calculatePurchaseFees(input.strike, input.amount);
+
+            buys[key].inputs = Inputs({
+                epoch: input.epoch,
+                blockNumber: input.blockNumber,
+                strikeIndex: input.strikeIndex,
+                amount: availableCollateral,
+                txType: input.txType,
+                strike: input.strike
+            });
+        }
+
+        buys[key].buyerDetails.premium = premium;
+        buys[key].buyerDetails.purchaseFee = purchaseFee;
+
+        buys[key].writerDetails.rewardTokenWithdrawAmounts = new uint256[](2);
     }
 
-    /*=== SETTLE ===*/
-    function settle(
-        ISsovV3 ssov,
-        uint256 epoch,
-        uint256 purchaseId
-    ) public returns (uint256 netPnl) {
-        (
-            uint256 _epoch,
-            uint256 strike,
-            uint256 amount,
-            ,
+    function settle(Outputs calldata output) public {
+        _validate(output.inputs.txType == 1, 21);
 
-        ) = getPurchasePosition(purchaseId);
+        setupFork();
+        _epochExpired(output.inputs.epoch);
+        _valueNotZero(output.inputs.amount);
+        _valueNotZero(output.inputs.strike);
 
-        purchasePositions[purchaseId].amount = 0;
+        bytes32 key = output.inputs.compute();
 
-        _valueNotZero(amount);
-        _validate(_epoch == epoch, 11);
-        _epochExpired(ssov, epoch);
+        uint256 settlementPrice = ssov
+            .getEpochData(output.inputs.epoch)
+            .settlementPrice;
 
-        // uint256 strike = ssov.getEpochData(epoch).strikes[strikeIndex];
-        _valueNotZero(strike);
-
-        // Get settlement price for epoch
-        uint256 settlementPrice = ssov.getEpochData(epoch).settlementPrice;
-
-        // Calculate pnl
         uint256 pnl = _calculatePnl(
-            ssov,
             settlementPrice,
-            strike,
-            amount,
-            ssov.getEpochData(epoch).settlementCollateralExchangeRate
+            output.inputs.strike,
+            output.inputs.amount,
+            ssov
+                .getEpochData(output.inputs.epoch)
+                .settlementCollateralExchangeRate
         );
 
-        // Total fee charged
-        uint256 settlementFee = _calculateSettlementFees(ssov, pnl);
+        uint256 settlementFee = _calculateSettlementFees(pnl);
+
+        uint256 netPnl;
 
         if (pnl == 0) {
             netPnl = 0;
         } else {
             netPnl = pnl - settlementFee;
         }
+
+        buys[key].buyerDetails.netPnl = netPnl;
     }
 
-    /*=== WITHDRAW ===*/
-    function calculateAccruedPremiumOnWithdraw(
-        ISsovV3 ssov,
-        uint256 epoch,
-        uint256 depositId
-    ) public view returns (uint256 accruedPremium) {
-        (
-            uint256 _epoch,
-            uint256 strike,
-            uint256 collateralAmount,
-            uint256 checkpointIndex,
-
-        ) = getWritePosition(depositId);
-
-        _valueNotZero(strike);
-        _validate(_epoch == epoch, 11);
-        _epochExpired(ssov, epoch);
-
+    function calculateAccruedPremium(Outputs calldata output)
+        public
+        view
+        returns (uint256 accruedPremium)
+    {
         uint256 extractedAmount;
         uint256 calculatedAccruedPremium;
-        uint256 pointer = checkpointIndex;
+        uint256 pointer = output.writerDetails.checkpointIndex;
 
         while (
-            (extractedAmount < collateralAmount) &&
-            (pointer < ssov.getEpochStrikeCheckpointsLength(epoch, strike))
+            (extractedAmount < output.inputs.amount) &&
+            (pointer <
+                ssov.getEpochStrikeCheckpointsLength(
+                    output.inputs.epoch,
+                    output.inputs.strike
+                ))
         ) {
-            uint256 _remainingRequired = collateralAmount - extractedAmount;
+            uint256 _remainingRequired = output.inputs.amount - extractedAmount;
 
             if (
-                ssov.checkpoints(epoch, strike, pointer).activeCollateral >=
-                _remainingRequired
+                ssov
+                    .checkpoints(
+                        output.inputs.epoch,
+                        output.inputs.strike,
+                        pointer
+                    )
+                    .activeCollateral >= _remainingRequired
             ) {
                 extractedAmount += _remainingRequired;
                 calculatedAccruedPremium +=
-                    (((collateralAmount * DEFAULT_PRECISION) /
+                    (((output.inputs.amount * DEFAULT_PRECISION) /
                         ssov
-                            .checkpoints(epoch, strike, pointer)
+                            .checkpoints(
+                                output.inputs.epoch,
+                                output.inputs.strike,
+                                pointer
+                            )
                             .activeCollateral) *
                         ssov
-                            .checkpoints(epoch, strike, pointer)
+                            .checkpoints(
+                                output.inputs.epoch,
+                                output.inputs.strike,
+                                pointer
+                            )
                             .accruedPremium) /
                     DEFAULT_PRECISION;
             } else {
                 extractedAmount += ssov
-                    .checkpoints(epoch, strike, pointer)
+                    .checkpoints(
+                        output.inputs.epoch,
+                        output.inputs.strike,
+                        pointer
+                    )
                     .activeCollateral;
                 calculatedAccruedPremium += ssov
-                    .checkpoints(epoch, strike, pointer)
+                    .checkpoints(
+                        output.inputs.epoch,
+                        output.inputs.strike,
+                        pointer
+                    )
                     .accruedPremium;
                 pointer += 1;
             }
         }
 
         accruedPremium =
-            ((ssov.checkpoints(epoch, strike, checkpointIndex).accruedPremium +
-                calculatedAccruedPremium) * collateralAmount) /
-            ssov.checkpoints(epoch, strike, checkpointIndex).totalCollateral;
+            ((ssov
+                .checkpoints(
+                    output.inputs.epoch,
+                    output.inputs.strike,
+                    output.writerDetails.checkpointIndex
+                )
+                .accruedPremium + calculatedAccruedPremium) *
+                output.inputs.amount) /
+            ssov
+                .checkpoints(
+                    output.inputs.epoch,
+                    output.inputs.strike,
+                    output.writerDetails.checkpointIndex
+                )
+                .totalCollateral;
     }
 
     function calculateCollateralTokenWithdrawAmount(
-        ISsovV3 ssov,
-        uint256 epoch,
-        uint256 depositId,
+        Outputs calldata output,
         uint256 accruedPremium
-    ) public view returns (uint256 collateralTokenWithdrawAmount) {
-        (
-            ,
-            uint256 strike,
-            uint256 collateralAmount,
-            uint256 checkpointIndex,
+    ) public {
+        bytes32 key = output.inputs.compute();
 
-        ) = getWritePosition(depositId);
-
-        // Calculate the withdrawable collateral amount
-        // Potentially change: `optionsWritten` -> collateralAmount
-        collateralTokenWithdrawAmount =
-            ((ssov.checkpoints(epoch, strike, checkpointIndex).totalCollateral -
-                _calculatePnl(
-                    ssov,
-                    ssov.getEpochData(epoch).settlementPrice,
-                    strike,
-                    collateralAmount,
-                    ssov.getEpochData(epoch).settlementCollateralExchangeRate
-                )) * collateralAmount) /
-            ssov.checkpoints(epoch, strike, checkpointIndex).totalCollateral;
+        uint256 collateralTokenWithdrawAmount = ((ssov
+            .checkpoints(
+                output.inputs.epoch,
+                output.inputs.strike,
+                output.writerDetails.checkpointIndex
+            )
+            .totalCollateral -
+            _calculatePnl(
+                ssov.getEpochData(output.inputs.epoch).settlementPrice,
+                output.inputs.strike,
+                output.inputs.amount,
+                ssov
+                    .getEpochData(output.inputs.epoch)
+                    .settlementCollateralExchangeRate
+            )) * output.inputs.amount) /
+            ssov
+                .checkpoints(
+                    output.inputs.epoch,
+                    output.inputs.strike,
+                    output.writerDetails.checkpointIndex
+                )
+                .totalCollateral;
 
         // Add premiums
         collateralTokenWithdrawAmount += accruedPremium;
+
+        writes[key]
+            .writerDetails
+            .collateralTokenWithdrawAmount = collateralTokenWithdrawAmount;
     }
 
     function calculateRewardTokenWithdrawAmounts(
-        ISsovV3 ssov,
-        uint256 epoch,
-        uint256 depositId,
+        Outputs calldata output,
         uint256 accruedPremium
-    ) public view returns (uint256[] memory rewardTokenWithdrawAmounts) {
-        (
-            ,
-            uint256 strike,
-            uint256 collateralAmount,
-            ,
-            uint256[] memory rewardDistributionRatios
-        ) = getWritePosition(depositId);
+    ) public {
+        bytes32 key = output.inputs.compute();
 
-        rewardTokenWithdrawAmounts = getUintArray(
-            ssov.getEpochData(epoch).rewardTokensToDistribute.length
+        uint256[] memory rewardTokenWithdrawAmounts = getUintArray(
+            ssov
+                .getEpochData(output.inputs.epoch)
+                .rewardTokensToDistribute
+                .length
         );
 
         // Calculate rewards
         for (uint256 i; i < rewardTokenWithdrawAmounts.length; ) {
             rewardTokenWithdrawAmounts[i] +=
-                ((ssov.getEpochData(epoch).rewardDistributionRatios[i] -
-                    rewardDistributionRatios[i]) * collateralAmount) /
+                ((ssov
+                    .getEpochData(output.inputs.epoch)
+                    .rewardDistributionRatios[i] -
+                    output.writerDetails.rewardDistributionRatios[i]) *
+                    output.inputs.amount) /
                 ssov.collateralPrecision();
 
-            if (ssov.getEpochStrikeData(epoch, strike).totalPremiums > 0)
+            if (
+                ssov
+                    .getEpochStrikeData(
+                        output.inputs.epoch,
+                        output.inputs.strike
+                    )
+                    .totalPremiums > 0
+            )
                 rewardTokenWithdrawAmounts[i] +=
                     (accruedPremium *
                         ssov
-                            .getEpochStrikeData(epoch, strike)
+                            .getEpochStrikeData(
+                                output.inputs.epoch,
+                                output.inputs.strike
+                            )
                             .rewardStoredForPremiums[i]) /
-                    ssov.getEpochStrikeData(epoch, strike).totalPremiums;
+                    ssov
+                        .getEpochStrikeData(
+                            output.inputs.epoch,
+                            output.inputs.strike
+                        )
+                        .totalPremiums;
 
             unchecked {
                 ++i;
             }
         }
+
+        writes[key]
+            .writerDetails
+            .rewardTokenWithdrawAmounts = rewardTokenWithdrawAmounts;
     }
 
-    function withdraw(
-        ISsovV3 ssov,
-        uint256 epoch,
-        uint256 depositId
-    )
-        public
-        view
-        returns (
-            uint256 collateralTokenWithdrawAmount,
-            uint256[] memory rewardTokenWithdrawAmounts
-        )
-    {
-        uint256 accruedPremium = calculateAccruedPremiumOnWithdraw(
-            ssov,
-            epoch,
-            depositId
-        );
-        collateralTokenWithdrawAmount = calculateCollateralTokenWithdrawAmount(
-            ssov,
-            epoch,
-            depositId,
-            accruedPremium
-        );
-        rewardTokenWithdrawAmounts = calculateRewardTokenWithdrawAmounts(
-            ssov,
-            epoch,
-            depositId,
-            accruedPremium
-        );
+    function withdraw(Outputs calldata output) public {
+        _validate(output.inputs.txType == 0, 20);
+
+        setupFork();
+        _epochExpired(output.inputs.epoch);
+        _valueNotZero(output.inputs.amount);
+        _valueNotZero(output.inputs.strike);
+
+        uint256 accruedPremium = calculateAccruedPremium(output);
+        calculateCollateralTokenWithdrawAmount(output, accruedPremium);
+        calculateRewardTokenWithdrawAmounts(output, accruedPremium);
     }
 
-    /*=== FUNCTIONS FOR DEPOSIT ===*/
+    /// -----------------------------------------------------------------------
+    /// Helper functions: deposit
+    /// -----------------------------------------------------------------------
 
-    function _getRewards(ISsovV3 ssov, uint256 epoch)
+    function _getRewards()
         public
         returns (uint256[] memory rewardTokenAmounts)
     {
+        uint256 epoch = ssov.currentEpoch();
         uint256 startTime = ssov.getEpochData(epoch).startTime;
         uint256 expiry = ssov.getEpochData(epoch).expiry;
 
@@ -341,13 +390,15 @@ contract Simulate is Test, SimulateState {
         }
     }
 
-    function _updateRewards(
-        ISsovV3 ssov,
-        uint256 epoch,
-        uint256[] memory totalRewardsArray
-    ) public view returns (uint256[] memory rewardsDistributionRatios) {
+    function _updateRewards(uint256[] memory totalRewardsArray)
+        public
+        view
+        returns (uint256[] memory rewardsDistributionRatios)
+    {
         rewardsDistributionRatios = getUintArray(totalRewardsArray.length);
         uint256 newRewardsCollected;
+
+        uint256 epoch = ssov.currentEpoch();
 
         for (uint256 i = 0; i < totalRewardsArray.length; ) {
             // Calculate the new rewards accrued
@@ -374,9 +425,11 @@ contract Simulate is Test, SimulateState {
         }
     }
 
-    /*=== FUNCTIONS FOR PURCHASE ===*/
+    /// -----------------------------------------------------------------------
+    /// Helper functions: purchase
+    /// -----------------------------------------------------------------------
+
     function _calculatePremium(
-        ISsovV3 ssov,
         uint256 epoch,
         uint256 strike,
         uint256 amount
@@ -398,11 +451,10 @@ contract Simulate is Test, SimulateState {
             (ssov.getCollateralPrice() * OPTIONS_PRECISION);
     }
 
-    function _calculatePurchaseFees(
-        ISsovV3 ssov,
-        uint256 strike,
-        uint256 amount
-    ) public returns (uint256 fee) {
+    function _calculatePurchaseFees(uint256 strike, uint256 amount)
+        public
+        returns (uint256 fee)
+    {
         uint256 purchaseFeePercentage = stdstore
             .target(ssov.addresses().feeStrategy)
             .sig("ssovFeeStructures(address)")
@@ -424,9 +476,11 @@ contract Simulate is Test, SimulateState {
         return ((fee * ssov.collateralPrecision()) / ssov.getCollateralPrice());
     }
 
-    /*=== FUNCTIONS FOR SETTLE ===*/
+    /// -----------------------------------------------------------------------
+    /// Helper functions: settle
+    /// -----------------------------------------------------------------------
+
     function _calculatePnl(
-        ISsovV3 ssov,
         uint256 price,
         uint256 strike,
         uint256 amount,
@@ -453,7 +507,7 @@ contract Simulate is Test, SimulateState {
                 : 0;
     }
 
-    function _calculateSettlementFees(ISsovV3 ssov, uint256 pnl)
+    function _calculateSettlementFees(uint256 pnl)
         public
         returns (uint256 fee)
     {
@@ -467,30 +521,26 @@ contract Simulate is Test, SimulateState {
         fee = (settlementFeePercentage * pnl) / 1e10;
     }
 
-    /*=== COUNTER FUNCTIONS ===*/
-
-    function getDepositId() public returns (uint256 depositId) {
-        depositId = _depositIdCounter.current();
-        _depositIdCounter.increment();
+    /// -----------------------------------------------------------------------
+    /// View functions
+    /// -----------------------------------------------------------------------
+    function getBuy(bytes32 key) public view returns (Outputs memory output) {
+        return buys[key];
     }
 
-    function getPurchaseId() public returns (uint256 purchaseId) {
-        purchaseId = _purchaseIdCounter.current();
-        _purchaseIdCounter.increment();
+    function getWrite(bytes32 key) public view returns (Outputs memory output) {
+        return writes[key];
     }
 
-    /*=== PRIVATE FUNCTIONS FOR REVERTS ===*/
+    /// -----------------------------------------------------------------------
+    /// Private functions for reverts
+    /// -----------------------------------------------------------------------
+
     /// @dev Internal function to validate a condition
     /// @param _condition boolean condition
     /// @param _errorCode error code to revert with
     function _validate(bool _condition, uint256 _errorCode) private pure {
         if (!_condition) revert SsovV3Error(_errorCode);
-    }
-
-    /// @dev Internal function to check if the epoch passed is not expired. Revert if expired.
-    /// @param _epoch the epoch
-    function _epochNotExpired(ISsovV3 ssov, uint256 _epoch) private view {
-        _validate(!ssov.getEpochData(_epoch).expired, 7);
     }
 
     /// @dev Internal function to check if the value passed is not zero. Revert if 0.
@@ -499,73 +549,21 @@ contract Simulate is Test, SimulateState {
         _validate(!valueGreaterThanZero(_value), 8);
     }
 
+    /// @dev Internal function to check if the epoch passed is not expired. Revert if expired.
+    /// @param _epoch the epoch
+    function _epochNotExpired(uint256 _epoch) private view {
+        _validate(!ssov.getEpochData(_epoch).expired, 7);
+    }
+
     /// @dev Internal function to check if the epoch passed is expired. Revert if not expired.
     /// @param _epoch the epoch
-    function _epochExpired(ISsovV3 ssov, uint256 _epoch) private view {
+    function _epochExpired(uint256 _epoch) private view {
         _validate(ssov.getEpochData(_epoch).expired, 9);
     }
 
-    /*=== VIEW FUNCTIONS ===*/
-
-    /// @notice View a write position
-    /// @param depositId depositId a parameter
-    function getWritePosition(uint256 depositId)
-        public
-        view
-        returns (
-            uint256 epoch,
-            uint256 strike,
-            uint256 collateralAmount,
-            uint256 checkpointIndex,
-            uint256[] memory rewardsDistributionRatios
-        )
-    {
-        WritePosition memory _writePosition = writePositions[depositId];
-
-        return (
-            _writePosition.epoch,
-            _writePosition.strike,
-            _writePosition.collateralAmount,
-            _writePosition.checkpointIndex,
-            _writePosition.rewardDistributionRatios
-        );
-    }
-
-    /// @notice View a purchase position
-    /// @param purchaseId purchaseId a parameter
-    function getPurchasePosition(uint256 purchaseId)
-        public
-        view
-        returns (
-            uint256 epoch,
-            uint256 strike,
-            uint256 amount,
-            uint256 premium,
-            uint256 purchaseFee
-        )
-    {
-        PurchasePosition memory _purchasePosition = purchasePositions[
-            purchaseId
-        ];
-
-        return (
-            _purchasePosition.epoch,
-            _purchasePosition.strike,
-            _purchasePosition.amount,
-            _purchasePosition.premium,
-            _purchasePosition.purchaseFee
-        );
-    }
-
-    /*=== PURE FUNCTIONS ===*/
-
-    function getUintArray(uint256 _arrayLength)
-        public
-        pure
-        returns (uint256[] memory result)
-    {
-        result = new uint256[](_arrayLength);
-    }
+    /// -----------------------------------------------------------------------
+    /// Pure functions
+    /// -----------------------------------------------------------------------
 
     function valueGreaterThanZero(uint256 _value)
         public
@@ -585,6 +583,14 @@ contract Simulate is Test, SimulateState {
         return uint256(keccak256(abi.encodePacked(key, slot)));
     }
 
+    function getUintArray(uint256 _arrayLength)
+        public
+        pure
+        returns (uint256[] memory result)
+    {
+        result = new uint256[](_arrayLength);
+    }
+
     function getArrayLocation(
         uint256 slot,
         uint256 index,
@@ -594,19 +600,24 @@ contract Simulate is Test, SimulateState {
             uint256(keccak256(abi.encodePacked(slot))) + (index * elementSize);
     }
 
-    /*==== ERRORS ====*/
+    /// -----------------------------------------------------------------------
+    /// Errors
+    /// -----------------------------------------------------------------------
     error SsovV3Error(uint256);
-}
 
-/*==== ERROR CODE MAPPING ====*/
-// 1 - block.timestamp must be greater than expiry timestamp
-// 2 - block.timestamp must be lesser than expiry timestamp + delay tolerance
-// 3 - block.timestamp must be lesser than the passed expiry timestamp
-// 4 - If current epoch is greater than 0 then the current epoch must be expired to bootstrap
-// 5 - block.timestamp must be lesser than the expiry timestamp
-// 6 - required collateral must be lesser than the available collateral
-// 7 - epoch must not be expired
-// 8 - value must not be zero
-// 9 - epoch must be expired
-// 10 - option token balance of msg.sender should be greater than or equal to amount being settled
-// 11 - simulation _epoch different to epoch
+    /// -----------------------------------------------------------------------
+    /// Helper Functions: Fork
+    /// -----------------------------------------------------------------------
+
+    /// @notice Creates and selects a new arbitrum mainnet fork.
+    function setupFork() public returns (uint256 id) {
+        id = vm.createSelectFork(vm.rpcUrl("arbitrum"));
+        assertEq(vm.activeFork(), id);
+    }
+
+    /// @notice Creates and selects a new arbitrum mainnet fork at a specified block.
+    function setupForkBlockSpecified(uint256 blk) public returns (uint256 id) {
+        id = vm.createSelectFork(vm.rpcUrl("arbitrum"), blk);
+        assertEq(vm.activeFork(), id);
+    }
+}
